@@ -31,7 +31,7 @@ jobs:
             - name: Sync node version and setup cache
               uses: actions/setup-node@v4
               with:
-                  node-version: 20
+                  node-version: 24
                   cache: pnpm
 
             - name: Init Project Config
@@ -42,18 +42,18 @@ jobs:
             - name: Grant Execute Permission for Gradle
               run: chmod +x ./gradlew
 
-            - name: Build Debug APK
-              run: ./gradlew assembleDebug
+            - name: Build Release APK
+              run: ./gradlew assembleRelease
 
             - name: Rename APK file
               run: |
-                  cd app/build/outputs/apk/debug/
-                  mv app-debug.apk ${{ env.NAME }}-v${{ env.VERSION }}.apk
+                  cd app/build/outputs/apk/release/
+                  mv app-release.apk ${{ env.NAME }}-v${{ env.VERSION }}.apk
 
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
               with:
-                  files: app/build/outputs/apk/debug/*.apk
+                  files: app/build/outputs/apk/release/*.apk
                   tag_name: '${{ env.NAME }}'
                   name: '${{ env.NAME }} v${{ env.VERSION }}'
                   body: '${{ env.PUBBODY }}'
