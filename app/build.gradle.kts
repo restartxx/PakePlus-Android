@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.app.pakeplus"
+    namespace = "com.sillytavern.app"
     compileSdk = 34
 
     defaultConfig {
