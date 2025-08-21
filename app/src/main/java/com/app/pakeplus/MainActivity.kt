@@ -1,15 +1,20 @@
 package com.app.pakeplus
 
 import android.annotation.SuppressLint
+import android.app.Activity // ADICIONADO: Import necessário
+import android.content.Intent // ADICIONADO: Import necessário
 import android.graphics.Bitmap
+import android.net.Uri // ADICIONADO: Import necessário
 import android.os.Bundle
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.webkit.ValueCallback // ADICIONADO: Import necessário
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast // ADICIONADO: Import para feedback ao usuário
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.GestureDetectorCompat
@@ -23,6 +28,10 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var gestureDetector: GestureDetectorCompat
+
+    // ADICIONADO: Variáveis para controlar o seletor de arquivos
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserRequestCode = 101
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,27 +68,18 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById<WebView>(R.id.webview)
 
         webView.settings.apply {
-            javaScriptEnabled = true       // 启用JS
-            domStorageEnabled = true       // 启用DOM存储（Vue 需要）
-            allowFileAccess = true         // 允许文件访问
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            allowFileAccess = true
             setSupportMultipleWindows(true)
         }
 
-        // webView.settings.userAgentString = ""
-
         webView.settings.loadWithOverviewMode = true
         webView.settings.setSupportZoom(false)
-
-        // clear cache
         webView.clearCache(true)
-
-        // inject js
         webView.webViewClient = MyWebViewClient()
+        webView.webChromeClient = MyChromeClient() // O ChromeClient modificado agora será usado
 
-        // get web load progress
-        webView.webChromeClient = MyChromeClient()
-
-        // Setup gesture detector
         gestureDetector =
             GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
                 override fun onFling(
@@ -89,21 +89,16 @@ class MainActivity : AppCompatActivity() {
                     velocityY: Float
                 ): Boolean {
                     if (e1 == null) return false
-
                     val diffX = e2.x - e1.x
                     val diffY = e2.y - e1.y
-
-                    // Only handle horizontal swipes
                     if (Math.abs(diffX) > Math.abs(diffY)) {
                         if (Math.abs(diffX) > 100 && Math.abs(velocityX) > 100) {
                             if (diffX > 0) {
-                                // Swipe right - go back
                                 if (webView.canGoBack()) {
                                     webView.goBack()
                                     return true
                                 }
                             } else {
-                                // Swipe left - go forward
                                 if (webView.canGoForward()) {
                                     webView.goForward()
                                     return true
@@ -115,13 +110,25 @@ class MainActivity : AppCompatActivity() {
                 }
             })
 
-        // Set touch listener for WebView
         webView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
             false
         }
 
-        webView.loadUrl("https://juejin.cn/")
+        webView.loadUrl("https://juejin.cn/") // Lembre-se de trocar para a sua URL
+    }
+
+    // ADICIONADO: Método para receber o resultado do seletor de arquivos
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == fileChooserRequestCode) {
+            if (filePathCallback != null) {
+                val uris = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+                filePathCallback!!.onReceiveValue(uris)
+                filePathCallback = null
+            }
+        }
     }
 
     @Deprecated("Deprecated in Java")
@@ -134,8 +141,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     inner class MyWebViewClient : WebViewClient() {
-
-        // vConsole debug
         private var debug = false
 
         @Deprecated("Deprecated in Java", ReplaceWith("false"))
@@ -163,22 +168,41 @@ class MainActivity : AppCompatActivity() {
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
             super.onPageStarted(view, url, favicon)
             if (debug) {
-                // vConsole
                 val vConsole = assets.open("vConsole.js").bufferedReader().use { it.readText() }
                 val openDebug = """var vConsole = new window.VConsole()"""
                 view?.evaluateJavascript(vConsole + openDebug, null)
             }
-            // inject js
             val injectJs = assets.open("custom.js").bufferedReader().use { it.readText() }
             view?.evaluateJavascript(injectJs, null)
         }
     }
 
+    // MODIFICADO: Classe MyChromeClient para incluir o seletor de arquivos
     inner class MyChromeClient : WebChromeClient() {
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
             super.onProgressChanged(view, newProgress)
             val url = view?.url
             println("wev view url:$url")
+        }
+
+        // ADICIONADO: Lógica para abrir o seletor de arquivos
+        override fun onShowFileChooser(
+            webView: WebView?,
+            filePathCallback: ValueCallback<Array<Uri>>?,
+            fileChooserParams: FileChooserParams?
+        ): Boolean {
+            this@MainActivity.filePathCallback?.onReceiveValue(null)
+            this@MainActivity.filePathCallback = filePathCallback
+
+            val intent = fileChooserParams?.createIntent()
+            try {
+                startActivityForResult(intent, fileChooserRequestCode)
+            } catch (e: Exception) {
+                this@MainActivity.filePathCallback = null
+                Toast.makeText(this@MainActivity, "Não foi possível abrir o seletor de arquivos.", Toast.LENGTH_LONG).show()
+                return false
+            }
+            return true
         }
     }
 }
