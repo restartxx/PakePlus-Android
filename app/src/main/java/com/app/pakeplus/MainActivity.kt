@@ -39,15 +39,16 @@ class MainActivity : AppCompatActivity() {
         val resultCode = result.resultCode
         var results: Array<Uri>? = null
 
-        // Lidar com o resultado do file picker
+        // Lidar com o resultado do file picker (com null safety corrigida)
         if (resultCode == RESULT_OK && intent != null) {
             val dataString = intent.dataString
             if (dataString != null) {
                 results = arrayOf(Uri.parse(dataString))
             } else if (intent.clipData != null) {
                 val clipData = intent.clipData
-                results = Array(clipData.itemCount) { index ->
-                    clipData.getItemAt(index).uri
+                val itemCount = clipData?.itemCount ?: 0  // Usando ?. para null safety
+                results = Array(itemCount) { index ->
+                    clipData?.getItemAt(index)?.uri ?: Uri.EMPTY  // Usando ?. e fallback para Uri vazio
                 }
             }
         }
