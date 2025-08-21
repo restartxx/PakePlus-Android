@@ -195,14 +195,20 @@ class MainActivity : AppCompatActivity() {
             this@MainActivity.filePathCallback = filePathCallback
 
             val intent = fileChooserParams?.createIntent()
-            try {
-                startActivityForResult(intent, fileChooserRequestCode)
-            } catch (e: Exception) {
+            return if (intent != null) {
+                try {
+                    startActivityForResult(intent, fileChooserRequestCode)
+                    true
+                } catch (e: Exception) {
+                    this@MainActivity.filePathCallback = null
+                    Toast.makeText(this@MainActivity, "Não foi possível abrir o seletor de arquivos.", Toast.LENGTH_LONG).show()
+                    false
+                }
+            } else {
                 this@MainActivity.filePathCallback = null
                 Toast.makeText(this@MainActivity, "Não foi possível abrir o seletor de arquivos.", Toast.LENGTH_LONG).show()
-                return false
+                false
             }
-            return true
         }
     }
 }
