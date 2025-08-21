@@ -1,28 +1,60 @@
 package com.app.pakeplus
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.GestureDetectorCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import android.view.WindowManager
-import android.view.View
 import android.graphics.Color
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var gestureDetector: GestureDetectorCompat
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    // Launcher para o file chooser (usando ActivityResultLauncher para compatibilidade moderna)
+    private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
+        val intent = result.data
+        if (filePathCallback == null) return@registerForActivityResult
+
+        val resultCode = result.resultCode
+        var results: Array<Uri>? = null
+
+        // Lidar com o resultado do file picker
+        if (resultCode == RESULT_OK && intent != null) {
+            val dataString = intent.dataString
+            if (dataString != null) {
+                results = arrayOf(Uri.parse(dataString))
+            } else if (intent.clipData != null) {
+                val clipData = intent.clipData
+                results = Array(clipData.itemCount) { index ->
+                    clipData.getItemAt(index).uri
+                }
+            }
+        }
+
+        filePathCallback?.onReceiveValue(results)
+        filePathCallback = null
+    }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -179,6 +211,38 @@ class MainActivity : AppCompatActivity() {
             super.onProgressChanged(view, newProgress)
             val url = view?.url
             println("wev view url:$url")
+        }
+
+        // Implementação para abrir o file picker
+        override fun onShowFileChooser(
+            webView: WebView?,
+            filePathCallback: ValueCallback<Array<Uri>>?,
+            fileChooserParams: FileChooserParams?
+        ): Boolean {
+            this@MainActivity.filePathCallback?.onReceiveValue(null) // Cancelar callback anterior, se houver
+            this@MainActivity.filePathCallback = filePathCallback
+
+            // Criar Intent para file picker (suporte a múltiplos arquivos e tipos)
+            val intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.type = "*/*" // Permitir qualquer tipo de arquivo
+
+            // Opcional: Adicionar suporte para capturar imagem/vídeo se o params indicar (ex.: accept="image/*")
+            if (fileChooserParams != null && fileChooserParams.acceptTypes.isNotEmpty()) {
+                val acceptTypes = fileChooserParams.acceptTypes
+                if (acceptTypes.any { it.contains("image") }) {
+                    intent.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(
+                        Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                    ))
+                } else if (acceptTypes.any { it.contains("video") }) {
+                    intent.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(
+                        Intent(MediaStore.ACTION_VIDEO_CAPTURE)
+                    ))
+                }
+            }
+
+            fileChooserLauncher.launch(intent)
+            return true
         }
     }
 }
