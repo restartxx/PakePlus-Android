@@ -101,15 +101,27 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://juejin.cn/") // Lembre-se de trocar para a sua URL
     }
 
+    // MODIFICADO: Lógica robusta para lidar com seleção de arquivo único e múltiplo
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == fileChooserRequestCode && filePathCallback != null) {
-            val uris = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
-            filePathCallback!!.onReceiveValue(uris)
+            var uris: Array<Uri>? = null
+            if (resultCode == Activity.RESULT_OK) {
+                if (data?.clipData != null) {
+                    // Múltiplos arquivos foram selecionados
+                    val count = data.clipData!!.itemCount
+                    uris = Array(count) { i -> data.clipData!!.getItemAt(i).uri }
+                } else if (data?.data != null) {
+                    // Um único arquivo foi selecionado
+                    uris = arrayOf(data.data!!)
+                }
+            }
+            filePathCallback?.onReceiveValue(uris)
             filePathCallback = null
         }
     }
+
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
@@ -155,7 +167,6 @@ class MainActivity : AppCompatActivity() {
             println("wev view url:$url")
         }
 
-        // MODIFICADO: Lógica para abrir o seletor de arquivos com suporte a múltiplos arquivos
         override fun onShowFileChooser(
             webView: WebView?,
             filePathCallback: ValueCallback<Array<Uri>>?,
@@ -166,7 +177,6 @@ class MainActivity : AppCompatActivity() {
 
             val intent = fileChooserParams?.createIntent()
             if (intent != null) {
-                // ADICIONADO: Habilita a seleção de múltiplos arquivos
                 if (fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
                     intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 }
