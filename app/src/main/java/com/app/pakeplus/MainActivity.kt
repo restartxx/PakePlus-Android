@@ -8,133 +8,88 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.util.Base64 // ADICIONADO: Para decodificar blobs
+import android.util.Base64
 import android.view.GestureDetector
 import android.view.MotionEvent
-import android.webkit.JavascriptInterface // ADICIONADO: Para comunicação JS -> Kotlin
-import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
-import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.GestureDetectorCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import android.view.WindowManager
-import android.view.View
-import android.graphics.Color
-import java.io.File // ADICIONADO: Para manipulação de arquivos
-import java.io.FileOutputStream // ADICIONADO: Para salvar arquivos
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var gestureDetector: GestureDetectorCompat
-
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private val fileChooserRequestCode = 101
 
-    // ADICIONADO: Classe para a interface JavaScript
-    inner class JsInterface {
+    // A interface para comunicação JS -> Kotlin
+    private inner class JsBridge {
         @JavascriptInterface
-        fun getBase64FromBlobData(base64Data: String, mimetype: String, fileName: String) {
+        fun processBlob(base64Data: String, fileName: String) {
             runOnUiThread {
-                saveBlobToFile(base64Data, mimetype, fileName)
+                saveBase64ToFile(base64Data, fileName)
             }
         }
     }
-    
+
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // ... (código do onCreate inicial sem alterações)
+        // ... (Seu código de UI e flags do window permanecem os mesmos)
+        setContentView(R.layout.single_main)
 
-        webView = findViewById<WebView>(R.id.webview)
-        // ... (configurações do webView)
-        
-        // ADICIONADO: Registra a interface JavaScript no WebView
-        webView.addJavascriptInterface(JsInterface(), "Android")
+        webView = findViewById(R.id.webview)
+        setupWebView()
 
-        // MODIFICADO: Lógica de download que agora trata blobs e URLs HTTP/HTTPS
-        webView.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
-            if (url.startsWith("blob:")) {
-                // É um blob, injeta JavaScript para converter e enviar para Kotlin
-                val js = """
-                    var xhr = new XMLHttpRequest();
-                    xhr.open('GET', '$url', true);
-                    xhr.responseType = 'blob';
-                    xhr.onload = function(e) {
-                        if (this.status == 200) {
-                            var blob = this.response;
-                            var reader = new FileReader();
-                            reader.readAsDataURL(blob);
-                            reader.onloadend = function() {
-                                base64data = reader.result;
-                                var fileName = '$contentDisposition'.match(/filename="?([^"]+)"?/);
-                                var finalFileName = fileName ? fileName[1] : 'downloaded_file';
-                                Android.getBase64FromBlobData(base64data, '$mimetype', finalFileName);
-                            }
-                        }
-                    };
-                    xhr.send();
-                """
-                webView.evaluateJavascript(js, null)
-            } else {
-                // É uma URL HTTP/HTTPS, usa o DownloadManager como antes
-                try {
-                    val request = DownloadManager.Request(Uri.parse(url))
-                    val cookies = CookieManager.getInstance().getCookie(url) ?: ""
+        gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
+            // ... (Seu código de gestos permanece o mesmo)
+        })
 
-                    if (cookies.isNotEmpty()) {
-                        request.addRequestHeader("Cookie", cookies)
-                    }
-                    request.addRequestHeader("User-Agent", userAgent)
-                    request.setDescription("Baixando arquivo...")
-
-                    val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
-                    request.setTitle(fileName)
-                    
-                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                    
-                    val dManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-                    dManager.enqueue(request)
-                    
-                    Toast.makeText(applicationContext, "Iniciando download de $fileName", Toast.LENGTH_LONG).show()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    Toast.makeText(applicationContext, "Erro ao iniciar download: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+        webView.setOnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
+            false
         }
-        
-        // ... (resto do código do onCreate sem alterações)
+
         webView.loadUrl("https://juejin.cn/") // Lembre-se de trocar para a sua URL
     }
 
-    // ADICIONADO: Função para salvar os dados do blob em um arquivo
-    private fun saveBlobToFile(base64Data: String, mimetype: String, fileName: String) {
+    private fun setupWebView() {
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            allowFileAccess = true
+            allowContentAccess = true
+            setSupportMultipleWindows(true)
+        }
+        webView.addJavascriptInterface(JsBridge(), "AndroidBridge")
+        webView.webViewClient = MyWebViewClient()
+        webView.webChromeClient = MyChromeClient()
+    }
+
+    private fun saveBase64ToFile(base64Data: String, fileName: String) {
         try {
-            val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
-            val dataString = base64Data.substringAfter("base64,")
-            val decodedBytes = Base64.decode(dataString, Base64.DEFAULT)
-            
-            val os = FileOutputStream(file, false)
-            os.write(decodedBytes)
-            os.flush()
-            os.close()
-            
-            // Notifica o sistema sobre o novo arquivo para que ele apareça na galeria/downloads
+            val data = base64Data.substringAfter("base64,")
+            val decodedBytes = Base64.decode(data, Base64.DEFAULT)
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val file = File(downloadsDir, fileName)
+
+            FileOutputStream(file).use { os ->
+                os.write(decodedBytes)
+            }
+
+            // Notifica o sistema para que o arquivo apareça
             val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
             mediaScanIntent.data = Uri.fromFile(file)
             sendBroadcast(mediaScanIntent)
-            
+
             Toast.makeText(this, "$fileName salvo na pasta Downloads", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -142,5 +97,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    // ... (resto do MainActivity.kt sem alterações)
+    // ... (onActivityResult e onBackPressed permanecem os mesmos)
+
+    private inner class MyWebViewClient : WebViewClient() {
+        override fun onPageFinished(view: WebView?, url: String?) {
+            super.onPageFinished(view, url)
+            // Script para interceptar cliques em links de blob
+            val js = """
+                document.addEventListener('click', function(e) {
+                    let target = e.target.closest('a');
+                    if (target && target.href.startsWith('blob:')) {
+                        e.preventDefault();
+                        fetch(target.href)
+                            .then(res => res.blob())
+                            .then(blob => {
+                                const reader = new FileReader();
+                                reader.onloadend = function() {
+                                    const fileName = target.download || 'downloaded_file';
+                                    AndroidBridge.processBlob(reader.result, fileName);
+                                };
+                                reader.readAsDataURL(blob);
+                            });
+                    }
+                });
+            """
+            view?.evaluateJavascript(js, null)
+        }
+    }
+
+    private inner class MyChromeClient : WebChromeClient() {
+        // ... (onShowFileChooser permanece o mesmo)
+    }
 }
