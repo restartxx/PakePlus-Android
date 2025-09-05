@@ -1,11 +1,9 @@
 package com.app.pakeplus
 
-import android.Manifest // ADICIONADO: Import para permissões
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.DownloadManager
 import android.content.Intent
-import android.content.pm.PackageManager // ADICIONADO: Import para checar permissões
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
@@ -23,8 +21,6 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat // ADICIONADO: Import para solicitar permissões
-import androidx.core.content.ContextCompat // ADICIONADO: Import para checar permissões
 import androidx.core.view.GestureDetectorCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -37,15 +33,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var gestureDetector: GestureDetectorCompat
 
-    // Variáveis para o seletor de arquivos
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private val fileChooserRequestCode = 101
-    
-    // ADICIONADO: Variáveis para gerenciar o pedido de permissão de download
-    private var pendingDownloadRequest: DownloadRequest? = null
-    private val storagePermissionCode = 102
-    private data class DownloadRequest(val url: String, val userAgent: String, val contentDisposition: String, val mimetype: String)
-
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,15 +69,56 @@ class MainActivity : AppCompatActivity() {
         webView.clearCache(true)
         webView.webViewClient = MyWebViewClient()
         webView.webChromeClient = MyChromeClient()
-        
-        // MODIFICADO: Chama a função que verifica a permissão antes de baixar
+
+        // Lógica para habilitar downloads diretamente via DownloadManager
         webView.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
-            checkStoragePermissionAndDownload(url, userAgent, contentDisposition, mimetype)
+            val request = DownloadManager.Request(Uri.parse(url))
+            val cookies = CookieManager.getInstance().getCookie(url)
+            
+            request.addRequestHeader("Cookie", cookies)
+            request.addRequestHeader("User-Agent", userAgent)
+            request.setDescription("Baixando arquivo...")
+            
+            val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
+            request.setTitle(fileName)
+            
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+            
+            val dManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+            dManager.enqueue(request)
+            
+            Toast.makeText(applicationContext, "Iniciando download de $fileName", Toast.LENGTH_LONG).show()
         }
 
         gestureDetector =
             GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
-                // ... (código do gestureDetector sem alterações)
+                override fun onFling(
+                    e1: MotionEvent?,
+                    e2: MotionEvent,
+                    velocityX: Float,
+                    velocityY: Float
+                ): Boolean {
+                    if (e1 == null) return false
+                    val diffX = e2.x - e1.x
+                    val diffY = e2.y - e1.y
+                    if (Math.abs(diffX) > Math.abs(diffY)) {
+                        if (Math.abs(diffX) > 100 && Math.abs(velocityX) > 100) {
+                            if (diffX > 0) {
+                                if (webView.canGoBack()) {
+                                    webView.goBack()
+                                    return true
+                                }
+                            } else {
+                                if (webView.canGoForward()) {
+                                    webView.goForward()
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                    return false
+                }
             })
         webView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
@@ -96,56 +126,6 @@ class MainActivity : AppCompatActivity() {
         }
         webView.loadUrl("https://juejin.cn/") // Lembre-se de trocar para a sua URL
     }
-
-    // ADICIONADO: Função que verifica a permissão e inicia o download ou pede permissão
-    private fun checkStoragePermissionAndDownload(url: String, userAgent: String, contentDisposition: String, mimetype: String) {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
-            startDownload(url, userAgent, contentDisposition, mimetype)
-        } else {
-            // Salva os detalhes do download para usar depois que a permissão for concedida
-            pendingDownloadRequest = DownloadRequest(url, userAgent, contentDisposition, mimetype)
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), storagePermissionCode)
-        }
-    }
-
-    // ADICIONADO: Função que efetivamente realiza o download
-    private fun startDownload(url: String, userAgent: String, contentDisposition: String, mimetype: String) {
-        val request = DownloadManager.Request(Uri.parse(url))
-        val cookies = CookieManager.getInstance().getCookie(url)
-        
-        request.addRequestHeader("Cookie", cookies)
-        request.addRequestHeader("User-Agent", userAgent)
-        request.setDescription("Downloading file...")
-        
-        val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
-        request.setTitle(fileName)
-        
-        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-        
-        val dManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-        dManager.enqueue(request)
-        
-        Toast.makeText(applicationContext, "Iniciando download de $fileName", Toast.LENGTH_LONG).show()
-    }
-
-    // ADICIONADO: Função que trata a resposta do usuário ao pedido de permissão
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == storagePermissionCode) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permissão concedida, retoma o download pendente
-                pendingDownloadRequest?.let {
-                    startDownload(it.url, it.userAgent, it.contentDisposition, it.mimetype)
-                }
-            } else {
-                Toast.makeText(this, "Permissão de armazenamento negada. Não é possível baixar.", Toast.LENGTH_LONG).show()
-            }
-            // Limpa o pedido pendente
-            pendingDownloadRequest = null
-        }
-    }
-
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -175,10 +155,65 @@ class MainActivity : AppCompatActivity() {
     }
 
     inner class MyWebViewClient : WebViewClient() {
-        // ... (código existente sem alterações)
+        private var debug = false
+        @Deprecated("Deprecated in Java", ReplaceWith("false"))
+        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+            return false
+        }
+        override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+            super.doUpdateVisitedHistory(view, url, isReload)
+        }
+        override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+            super.onReceivedError(view, request, error)
+            println("webView onReceivedError: ${error?.description}")
+        }
+        override fun onPageFinished(view: WebView?, url: String?) {
+            super.onPageFinished(view, url)
+        }
+        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+            super.onPageStarted(view, url, favicon)
+            if (debug) {
+                val vConsole = assets.open("vConsole.js").bufferedReader().use { it.readText() }
+                val openDebug = """var vConsole = new window.VConsole()"""
+                view?.evaluateJavascript(vConsole + openDebug, null)
+            }
+            val injectJs = assets.open("custom.js").bufferedReader().use { it.readText() }
+            view?.evaluateJavascript(injectJs, null)
+        }
     }
 
     inner class MyChromeClient : WebChromeClient() {
-        // ... (código existente sem alterações)
+        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+            super.onProgressChanged(view, newProgress)
+            val url = view?.url
+            println("wev view url:$url")
+        }
+
+        override fun onShowFileChooser(
+            webView: WebView?,
+            filePathCallback: ValueCallback<Array<Uri>>?,
+            fileChooserParams: FileChooserParams?
+        ): Boolean {
+            this@MainActivity.filePathCallback?.onReceiveValue(null)
+            this@MainActivity.filePathCallback = filePathCallback
+            val intent = fileChooserParams?.createIntent()
+            if (intent != null) {
+                if (fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
+                try {
+                    startActivityForResult(intent, fileChooserRequestCode)
+                    return true
+                } catch (e: Exception) {
+                    this@MainActivity.filePathCallback = null
+                    Toast.makeText(this@MainActivity, "Não foi possível abrir o seletor de arquivos.", Toast.LENGTH_LONG).show()
+                    return false
+                }
+            } else {
+                this@MainActivity.filePathCallback = null
+                Toast.makeText(this@MainActivity, "Não foi possível abrir o seletor de arquivos.", Toast.LENGTH_LONG).show()
+                return false
+            }
+        }
     }
 }
