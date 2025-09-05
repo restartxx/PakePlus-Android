@@ -70,25 +70,33 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = MyWebViewClient()
         webView.webChromeClient = MyChromeClient()
 
-        // Lógica para habilitar downloads diretamente via DownloadManager
+        // MODIFICADO: Adicionado tratamento de erros para evitar crashes
         webView.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
-            val request = DownloadManager.Request(Uri.parse(url))
-            val cookies = CookieManager.getInstance().getCookie(url)
-            
-            request.addRequestHeader("Cookie", cookies)
-            request.addRequestHeader("User-Agent", userAgent)
-            request.setDescription("Baixando arquivo...")
-            
-            val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
-            request.setTitle(fileName)
-            
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-            
-            val dManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-            dManager.enqueue(request)
-            
-            Toast.makeText(applicationContext, "Iniciando download de $fileName", Toast.LENGTH_LONG).show()
+            try {
+                val request = DownloadManager.Request(Uri.parse(url))
+                val cookies = CookieManager.getInstance().getCookie(url) ?: ""
+
+                if (cookies.isNotEmpty()) {
+                    request.addRequestHeader("Cookie", cookies)
+                }
+                request.addRequestHeader("User-Agent", userAgent)
+                request.setDescription("Baixando arquivo...")
+
+                val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
+                request.setTitle(fileName)
+
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+
+                val dManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                dManager.enqueue(request)
+
+                Toast.makeText(applicationContext, "Iniciando download de $fileName", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                // Captura qualquer erro e exibe uma mensagem em vez de fechar o app
+                e.printStackTrace()
+                Toast.makeText(applicationContext, "Erro ao iniciar download: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
 
         gestureDetector =
