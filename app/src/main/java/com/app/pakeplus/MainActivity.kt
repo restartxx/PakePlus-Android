@@ -8,8 +8,10 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.util.Base64 // ADICIONADO: Para decodificar blobs
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.webkit.JavascriptInterface // ADICIONADO: Para comunicação JS -> Kotlin
 import android.webkit.CookieManager
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
@@ -27,6 +29,8 @@ import androidx.core.view.WindowInsetsCompat
 import android.view.WindowManager
 import android.view.View
 import android.graphics.Color
+import java.io.File // ADICIONADO: Para manipulação de arquivos
+import java.io.FileOutputStream // ADICIONADO: Para salvar arquivos
 
 class MainActivity : AppCompatActivity() {
 
@@ -36,192 +40,107 @@ class MainActivity : AppCompatActivity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private val fileChooserRequestCode = 101
 
+    // ADICIONADO: Classe para a interface JavaScript
+    inner class JsInterface {
+        @JavascriptInterface
+        fun getBase64FromBlobData(base64Data: String, mimetype: String, fileName: String) {
+            runOnUiThread {
+                saveBlobToFile(base64Data, mimetype, fileName)
+            }
+        }
+    }
+    
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-        window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-            or View.SYSTEM_UI_FLAG_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        )
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
-        enableEdgeToEdge()
-        setContentView(R.layout.single_main)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.ConstraintLayout)) { view, insets ->
-            val systemBar = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(0, systemBar.top, 0, 0)
-            insets
-        }
+        // ... (código do onCreate inicial sem alterações)
+
         webView = findViewById<WebView>(R.id.webview)
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            allowFileAccess = true
-            setSupportMultipleWindows(true)
-        }
-        webView.settings.loadWithOverviewMode = true
-        webView.settings.setSupportZoom(false)
-        webView.clearCache(true)
-        webView.webViewClient = MyWebViewClient()
-        webView.webChromeClient = MyChromeClient()
+        // ... (configurações do webView)
+        
+        // ADICIONADO: Registra a interface JavaScript no WebView
+        webView.addJavascriptInterface(JsInterface(), "Android")
 
-        // MODIFICADO: Adicionado tratamento de erros para evitar crashes
+        // MODIFICADO: Lógica de download que agora trata blobs e URLs HTTP/HTTPS
         webView.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
-            try {
-                val request = DownloadManager.Request(Uri.parse(url))
-                val cookies = CookieManager.getInstance().getCookie(url) ?: ""
-
-                if (cookies.isNotEmpty()) {
-                    request.addRequestHeader("Cookie", cookies)
-                }
-                request.addRequestHeader("User-Agent", userAgent)
-                request.setDescription("Baixando arquivo...")
-
-                val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
-                request.setTitle(fileName)
-
-                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-
-                val dManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-                dManager.enqueue(request)
-
-                Toast.makeText(applicationContext, "Iniciando download de $fileName", Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                // Captura qualquer erro e exibe uma mensagem em vez de fechar o app
-                e.printStackTrace()
-                Toast.makeText(applicationContext, "Erro ao iniciar download: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-
-        gestureDetector =
-            GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
-                override fun onFling(
-                    e1: MotionEvent?,
-                    e2: MotionEvent,
-                    velocityX: Float,
-                    velocityY: Float
-                ): Boolean {
-                    if (e1 == null) return false
-                    val diffX = e2.x - e1.x
-                    val diffY = e2.y - e1.y
-                    if (Math.abs(diffX) > Math.abs(diffY)) {
-                        if (Math.abs(diffX) > 100 && Math.abs(velocityX) > 100) {
-                            if (diffX > 0) {
-                                if (webView.canGoBack()) {
-                                    webView.goBack()
-                                    return true
-                                }
-                            } else {
-                                if (webView.canGoForward()) {
-                                    webView.goForward()
-                                    return true
-                                }
+            if (url.startsWith("blob:")) {
+                // É um blob, injeta JavaScript para converter e enviar para Kotlin
+                val js = """
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('GET', '$url', true);
+                    xhr.responseType = 'blob';
+                    xhr.onload = function(e) {
+                        if (this.status == 200) {
+                            var blob = this.response;
+                            var reader = new FileReader();
+                            reader.readAsDataURL(blob);
+                            reader.onloadend = function() {
+                                base64data = reader.result;
+                                var fileName = '$contentDisposition'.match(/filename="?([^"]+)"?/);
+                                var finalFileName = fileName ? fileName[1] : 'downloaded_file';
+                                Android.getBase64FromBlobData(base64data, '$mimetype', finalFileName);
                             }
                         }
+                    };
+                    xhr.send();
+                """
+                webView.evaluateJavascript(js, null)
+            } else {
+                // É uma URL HTTP/HTTPS, usa o DownloadManager como antes
+                try {
+                    val request = DownloadManager.Request(Uri.parse(url))
+                    val cookies = CookieManager.getInstance().getCookie(url) ?: ""
+
+                    if (cookies.isNotEmpty()) {
+                        request.addRequestHeader("Cookie", cookies)
                     }
-                    return false
+                    request.addRequestHeader("User-Agent", userAgent)
+                    request.setDescription("Baixando arquivo...")
+
+                    val fileName = URLUtil.guessFileName(url, contentDisposition, mimetype)
+                    request.setTitle(fileName)
+                    
+                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                    
+                    val dManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                    dManager.enqueue(request)
+                    
+                    Toast.makeText(applicationContext, "Iniciando download de $fileName", Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    Toast.makeText(applicationContext, "Erro ao iniciar download: ${e.message}", Toast.LENGTH_LONG).show()
                 }
-            })
-        webView.setOnTouchListener { _, event ->
-            gestureDetector.onTouchEvent(event)
-            false
+            }
         }
+        
+        // ... (resto do código do onCreate sem alterações)
         webView.loadUrl("https://juejin.cn/") // Lembre-se de trocar para a sua URL
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == fileChooserRequestCode && filePathCallback != null) {
-            var uris: Array<Uri>? = null
-            if (resultCode == Activity.RESULT_OK) {
-                if (data?.clipData != null) {
-                    val count = data.clipData!!.itemCount
-                    uris = Array(count) { i -> data.clipData!!.getItemAt(i).uri }
-                } else if (data?.data != null) {
-                    uris = arrayOf(data.data!!)
-                }
-            }
-            filePathCallback?.onReceiveValue(uris)
-            filePathCallback = null
+    // ADICIONADO: Função para salvar os dados do blob em um arquivo
+    private fun saveBlobToFile(base64Data: String, mimetype: String, fileName: String) {
+        try {
+            val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
+            val dataString = base64Data.substringAfter("base64,")
+            val decodedBytes = Base64.decode(dataString, Base64.DEFAULT)
+            
+            val os = FileOutputStream(file, false)
+            os.write(decodedBytes)
+            os.flush()
+            os.close()
+            
+            // Notifica o sistema sobre o novo arquivo para que ele apareça na galeria/downloads
+            val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
+            mediaScanIntent.data = Uri.fromFile(file)
+            sendBroadcast(mediaScanIntent)
+            
+            Toast.makeText(this, "$fileName salvo na pasta Downloads", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Falha ao salvar o arquivo: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
-
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
-        }
-    }
-
-    inner class MyWebViewClient : WebViewClient() {
-        private var debug = false
-        @Deprecated("Deprecated in Java", ReplaceWith("false"))
-        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-            return false
-        }
-        override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
-            super.doUpdateVisitedHistory(view, url, isReload)
-        }
-        override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-            super.onReceivedError(view, request, error)
-            println("webView onReceivedError: ${error?.description}")
-        }
-        override fun onPageFinished(view: WebView?, url: String?) {
-            super.onPageFinished(view, url)
-        }
-        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-            super.onPageStarted(view, url, favicon)
-            if (debug) {
-                val vConsole = assets.open("vConsole.js").bufferedReader().use { it.readText() }
-                val openDebug = """var vConsole = new window.VConsole()"""
-                view?.evaluateJavascript(vConsole + openDebug, null)
-            }
-            val injectJs = assets.open("custom.js").bufferedReader().use { it.readText() }
-            view?.evaluateJavascript(injectJs, null)
-        }
-    }
-
-    inner class MyChromeClient : WebChromeClient() {
-        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-            super.onProgressChanged(view, newProgress)
-            val url = view?.url
-            println("wev view url:$url")
-        }
-
-        override fun onShowFileChooser(
-            webView: WebView?,
-            filePathCallback: ValueCallback<Array<Uri>>?,
-            fileChooserParams: FileChooserParams?
-        ): Boolean {
-            this@MainActivity.filePathCallback?.onReceiveValue(null)
-            this@MainActivity.filePathCallback = filePathCallback
-            val intent = fileChooserParams?.createIntent()
-            if (intent != null) {
-                if (fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
-                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                }
-                try {
-                    startActivityForResult(intent, fileChooserRequestCode)
-                    return true
-                } catch (e: Exception) {
-                    this@MainActivity.filePathCallback = null
-                    Toast.makeText(this@MainActivity, "Não foi possível abrir o seletor de arquivos.", Toast.LENGTH_LONG).show()
-                    return false
-                }
-            } else {
-                this@MainActivity.filePathCallback = null
-                Toast.makeText(this@MainActivity, "Não foi possível abrir o seletor de arquivos.", Toast.LENGTH_LONG).show()
-                return false
-            }
-        }
-    }
+    
+    // ... (resto do MainActivity.kt sem alterações)
 }
